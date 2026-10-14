@@ -32,12 +32,14 @@ rcsid[] = "$Id: i_x.c,v 1.6 1997/02/03 22:45:10 b1 Exp $";
 #include "d_main.h"
 #include "i_video.h"
 #include "z_zone.h"
+#include "i_timer.h"
 
 #include "tables.h"
 #include "doomkeys.h"
 
 #include <stdbool.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <unistd.h>
 #include <fcntl.h>
 
@@ -47,11 +49,36 @@ rcsid[] = "$Id: i_x.c,v 1.6 1997/02/03 22:45:10 b1 Exp $";
 #include <sys/socket.h>
 #include <linux/fb.h>
 #include <sys/ioctl.h>
+#include <sys/mman.h>
+#include <string.h>
 
 //#define CMAP256
 
 struct fb_var_screeninfo fb = {};
 int fb_scaling = 1;
+
+/*
+ * 16 bpp: the frame is drawn straight into the mmapped fb. With
+ * yres_virtual >= 2 * yres (e.g. the mstar-gopfb driver) it goes into the
+ * hidden buffer, which is shown with FBIOPAN_DISPLAY at the next vsync, and
+ * FBIO_WAITFORVSYNC waits until the flip happened (double buffering).
+ * -singlebuffer: draw into the visible buffer, -novsync: flip without
+ * waiting. Other depths use the original write() path.
+ */
+#ifndef FBIO_WAITFORVSYNC
+#define FBIO_WAITFORVSYNC _IOW('F', 0x20, uint32_t)
+#endif
+static int fb_double;
+static int fb_vsync = 1;
+static int fb_back;
+static unsigned char *fb_mem;
+static struct fb_fix_screeninfo fb_fix;
+static int show_fps;            /* -fps: print frames per second every 5 s */
+
+/* fast path for 16 bpp: palette already in the fb pixel format, one scaled
+ * line built in RAM and copied fb_scaling times into the mmapped fb */
+static uint16_t palette16[256];
+static uint16_t *line16;
 int usemouse = 0;
 
 struct color {
@@ -199,6 +226,29 @@ void I_InitGraphics (void)
     /* Allocate screen to draw to */
 	I_VideoBuffer = (byte*)Z_Malloc (SCREENWIDTH * SCREENHEIGHT, PU_STATIC, NULL);  // For DOOM to draw on
 	I_VideoBuffer_FB = (byte*)malloc(fb.xres * fb.yres * (fb.bits_per_pixel/8));     // For a single write() syscall to fbdev
+
+    ioctl(fd_fb, FBIOGET_FSCREENINFO, &fb_fix);
+    if (fb.bits_per_pixel == 16) {
+        fb_mem = mmap(NULL, fb_fix.smem_len, PROT_READ | PROT_WRITE, MAP_SHARED, fd_fb, 0);
+        if (fb_mem == MAP_FAILED)
+            fb_mem = NULL;
+        else
+            line16 = malloc(fb.xres * 2);
+    }
+    if (fb_mem && fb.yres_virtual >= 2 * fb.yres && !M_CheckParm("-singlebuffer")) {
+        fb_double = 1;
+        fb_back = 1;
+    }
+    if (fb_mem) {
+        memset(fb_mem, 0, fb_fix.line_length * fb.yres * (fb_double ? 2 : 1));   /* black borders */
+        fb.yoffset = 0;
+        ioctl(fd_fb, FBIOPAN_DISPLAY, &fb);
+    }
+    if (M_CheckParm("-novsync"))
+        fb_vsync = 0;
+    show_fps = M_CheckParm("-fps");
+    printf("I_InitGraphics: %s buffering%s\n", fb_double ? "double" : "single",
+           fb_double && fb_vsync ? ", vsync" : "");
 
 	screenvisible = true;
 
@@ -400,9 +450,62 @@ void I_UpdateNoBlit (void)
 // I_FinishUpdate
 //
 
+static void count_fps(void)
+{
+    static int frames, t0;
+    int t = I_GetTimeMS();
+
+    if (!t0)
+        t0 = t;
+    frames++;
+    if (t - t0 >= 5000) {
+        fprintf(stderr, "fps: %.1f\n", frames * 1000.0 / (t - t0));
+        frames = 0;
+        t0 = t;
+    }
+}
+
 void I_FinishUpdate (void)
 {
     int y;
+
+    if (show_fps)
+        count_fps();
+
+    if (fb_mem) {
+        int top = (fb.yres - SCREENHEIGHT * fb_scaling) / 2;
+        int left = (fb.xres - SCREENWIDTH * fb_scaling) / 2;
+        int w = SCREENWIDTH * fb_scaling;
+        unsigned char *dst = fb_mem + (fb_double ? fb_back * fb.yres : 0) * fb_fix.line_length
+                             + top * fb_fix.line_length + left * 2;
+        byte *src = I_VideoBuffer;
+        uint32_t zero = 0;
+        int i, x;
+
+        for (y = 0; y < SCREENHEIGHT; y++) {
+            uint16_t *o = line16;
+
+            for (x = 0; x < SCREENWIDTH; x++) {
+                uint16_t p = palette16[*src++];
+
+                for (i = 0; i < fb_scaling; i++)
+                    *o++ = p;
+            }
+            for (i = 0; i < fb_scaling; i++) {
+                memcpy(dst, line16, w * 2);
+                dst += fb_fix.line_length;
+            }
+        }
+        if (fb_double) {
+            /* show the hidden buffer at the next vsync */
+            fb.yoffset = fb_back * fb.yres;
+            ioctl(fd_fb, FBIOPAN_DISPLAY, &fb);
+            if (fb_vsync)
+                ioctl(fd_fb, FBIO_WAITFORVSYNC, &zero);   /* the old buffer is free after this */
+            fb_back ^= 1;
+        }
+        return;
+    }
     int x_offset, y_offset, x_offset_end;
     unsigned char *line_in, *line_out;
 
@@ -487,6 +590,9 @@ void I_SetPalette (byte* palette)
         colors[i].r = gammatable[usegamma][*palette++];
         colors[i].g = gammatable[usegamma][*palette++];
         colors[i].b = gammatable[usegamma][*palette++];
+        palette16[i] = (colors[i].r >> (8 - fb.red.length)) << fb.red.offset |
+                       (colors[i].g >> (8 - fb.green.length)) << fb.green.offset |
+                       (colors[i].b >> (8 - fb.blue.length)) << fb.blue.offset;
     }
 
     /* Set new color map in kernel framebuffer driver */
