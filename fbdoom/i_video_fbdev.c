@@ -50,6 +50,7 @@ rcsid[] = "$Id: i_x.c,v 1.6 1997/02/03 22:45:10 b1 Exp $";
 #include <linux/fb.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
+#include <linux/kd.h>
 #include <string.h>
 
 //#define CMAP256
@@ -80,6 +81,8 @@ static int show_fps;            /* -fps: print frames per second every 5 s */
 static uint16_t palette16[256];
 static uint16_t *line16;
 static void fb_restore(void);
+static void console_graphics(void);
+static int vt_fd = -1;          /* console put in KD_GRAPHICS while playing */
 int usemouse = 0;
 
 struct color {
@@ -240,6 +243,7 @@ void I_InitGraphics (void)
         fb_double = 1;
         fb_back = 1;
     }
+    console_graphics();
     if (fb_mem) {
         atexit(fb_restore);
         memset(fb_mem, 0, fb_fix.line_length * fb.yres * (fb_double ? 2 : 1));   /* black borders */
@@ -458,6 +462,27 @@ static void fb_restore(void)
     if (fb_mem && fb.yoffset) {
         fb.yoffset = 0;
         ioctl(fd_fb, FBIOPAN_DISPLAY, &fb);
+    }
+    if (vt_fd >= 0) {
+        ioctl(vt_fd, KDSETMODE, KD_TEXT);   /* console draws (and redraws) again */
+        close(vt_fd);
+        vt_fd = -1;
+    }
+}
+
+/*
+ * Stop the text console from drawing into the framebuffer (cursor blink,
+ * kernel messages) while the game runs. With double buffering they would
+ * flash in every other frame. Same as unbinding vtcon1 by hand.
+ */
+static void console_graphics(void)
+{
+    vt_fd = open("/dev/tty0", O_RDWR);
+    if (vt_fd < 0)
+        return;
+    if (ioctl(vt_fd, KDSETMODE, KD_GRAPHICS) != 0) {
+        close(vt_fd);
+        vt_fd = -1;
     }
 }
 
