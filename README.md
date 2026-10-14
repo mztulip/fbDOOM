@@ -37,7 +37,9 @@ Related:
    reads keys from stdin in raw mode, so no USB keyboard is needed. See
    [Serial console controls](#serial-console-controls).
 4. `-fps` prints the frame rate every 5 seconds.
-5. The `Makefile` defaults to the Buildroot mipsel toolchain
+5. The console is put in `KD_GRAPHICS` while playing, and `Quit Game` really
+   exits. Terminal, keyboard and framebuffer are restored by `atexit()`.
+6. The `Makefile` defaults to the Buildroot mipsel toolchain
    (`CROSS_COMPILE ?= mipsel-buildroot-linux-gnu-`) and builds with
    `-std=gnu89`.
 
@@ -58,10 +60,12 @@ You also need a WAD file, e.g. the shareware
 ## Running
 
 ```sh
-echo 0 > /sys/class/vtconsole/vtcon1/bind    # keep the text console from drawing over the game
 ./fbdoom -iwad doom1.wad
-echo 1 > /sys/class/vtconsole/vtcon1/bind    # console back after quitting
 ```
+While the game runs, the virtual console is switched to `KD_GRAPHICS`, so
+the text console (cursor blink, kernel messages) does not draw into the
+framebuffer. With double buffering it would show up as flicker in every
+other frame. `KD_TEXT` is restored at exit.
 
 ### Options
 
