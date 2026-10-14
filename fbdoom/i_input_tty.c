@@ -271,6 +271,21 @@ static int keyhold_first = 300;
 #define KEYHOLD_REPEAT 120
 static int held_until[256];     /* I_GetTimeMS() when the key is released, 0 = up */
 
+/* put the keyboard / terminal back the way we found it; runs at exit */
+static void kbd_restore(void)
+{
+    if (old_mode != -1) {
+        ioctl(kb, KDSKBMODE, old_mode);
+        tcsetattr(kb, 0, &old_term);
+        old_mode = -1;
+    }
+    if (serial_mode) {
+        tcsetattr(0, TCSANOW, &serial_old_term);
+        fcntl(0, F_SETFL, fcntl(0, F_GETFL, 0) & ~O_NONBLOCK);
+        serial_mode = 0;
+    }
+}
+
 void kbd_shutdown(void)
 {
     /* Shut down nicely. */
@@ -279,12 +294,7 @@ void kbd_shutdown(void)
     fflush(stdout);
 
     printf("Exiting normally.\n");
-    if (old_mode != -1) {
-        ioctl(kb, KDSKBMODE, old_mode);
-        tcsetattr(kb, 0, &old_term);
-    }
-    if (serial_mode)
-        tcsetattr(0, TCSANOW, &serial_old_term);
+    kbd_restore();
 
     if (kb > 3)
         close(kb);
@@ -308,6 +318,7 @@ static int serial_init(void)
     t.c_cc[VTIME] = 0;
     tcsetattr(0, TCSANOW, &t);
     fcntl(0, F_SETFL, fcntl(0, F_GETFL, 0) | O_NONBLOCK);
+    atexit(kbd_restore);
 
     i = M_CheckParmWithArgs("-keyhold", 1);
     if (i > 0)
@@ -393,6 +404,8 @@ static int kbd_init(void)
         printf("Unable to change terminal settings.\n");
     }
     
+    atexit(kbd_restore);
+
     /* Put the keyboard in mediumraw mode. */
     if (ioctl(kb, KDSKBMODE, K_MEDIUMRAW) != 0) {
         printf("Unable to set mediumraw mode.\n");

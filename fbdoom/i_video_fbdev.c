@@ -79,6 +79,7 @@ static int show_fps;            /* -fps: print frames per second every 5 s */
  * line built in RAM and copied fb_scaling times into the mmapped fb */
 static uint16_t palette16[256];
 static uint16_t *line16;
+static void fb_restore(void);
 int usemouse = 0;
 
 struct color {
@@ -240,6 +241,7 @@ void I_InitGraphics (void)
         fb_back = 1;
     }
     if (fb_mem) {
+        atexit(fb_restore);
         memset(fb_mem, 0, fb_fix.line_length * fb.yres * (fb_double ? 2 : 1));   /* black borders */
         fb.yoffset = 0;
         ioctl(fd_fb, FBIOPAN_DISPLAY, &fb);
@@ -449,6 +451,15 @@ void I_UpdateNoBlit (void)
 //
 // I_FinishUpdate
 //
+
+/* at exit: show buffer 0 again, the text console only draws there */
+static void fb_restore(void)
+{
+    if (fb_mem && fb.yoffset) {
+        fb.yoffset = 0;
+        ioctl(fd_fb, FBIOPAN_DISPLAY, &fb);
+    }
+}
 
 static void count_fps(void)
 {

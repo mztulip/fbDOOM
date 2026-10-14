@@ -259,9 +259,11 @@ void I_Quit (void)
 
 #if ORIGCODE
     SDL_Quit();
-
-    exit(0);
 #endif
+
+    /* without this the game keeps running after "quit" (looks like a
+       restart); keyboard/terminal and framebuffer are restored by atexit() */
+    exit(0);
 }
 
 #if !defined(_WIN32) && !defined(__MACOSX__)
