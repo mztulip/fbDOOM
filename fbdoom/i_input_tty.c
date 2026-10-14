@@ -255,6 +255,22 @@ static int old_mode = -1;
 static struct termios old_term;
 static int kb = -1; /* keyboard file descriptor */
 
+/*
+ * Serial terminal input: used when started from a terminal that is not a
+ * VT (e.g. picocom on the board's UART console), when no VT keyboard is
+ * found, or with -serialkeys; -vtkeys forces the VT keyboard instead.
+ * stdin is put in raw mode. A terminal only sends key
+ * presses (plus autorepeat), never releases, so a key counts as held while
+ * it keeps repeating and is released a moment after the last byte:
+ * -keyhold N sets that time for the first press (ms, default 300), repeats
+ * extend it by 120 ms. Ctrl-C quits.
+ */
+static int serial_mode;
+static struct termios serial_old_term;
+static int keyhold_first = 300;
+#define KEYHOLD_REPEAT 120
+static int held_until[256];     /* I_GetTimeMS() when the key is released, 0 = up */
+
 void kbd_shutdown(void)
 {
     /* Shut down nicely. */
@@ -267,11 +283,39 @@ void kbd_shutdown(void)
         ioctl(kb, KDSKBMODE, old_mode);
         tcsetattr(kb, 0, &old_term);
     }
+    if (serial_mode)
+        tcsetattr(0, TCSANOW, &serial_old_term);
 
     if (kb > 3)
         close(kb);
 
     exit(0);
+}
+
+static int serial_init(void)
+{
+    struct termios t;
+    int i;
+
+    if (!isatty(0) || tcgetattr(0, &serial_old_term) != 0) {
+        printf("No VT keyboard and stdin is not a terminal: no input.\n");
+        return 1;
+    }
+    t = serial_old_term;
+    t.c_iflag &= ~(ICRNL | INLCR | IGNCR | IXON | ISTRIP);
+    t.c_lflag &= ~(ECHO | ICANON | ISIG | IEXTEN);
+    t.c_cc[VMIN] = 0;
+    t.c_cc[VTIME] = 0;
+    tcsetattr(0, TCSANOW, &t);
+    fcntl(0, F_SETFL, fcntl(0, F_GETFL, 0) | O_NONBLOCK);
+
+    i = M_CheckParmWithArgs("-keyhold", 1);
+    if (i > 0)
+        keyhold_first = atoi(myargv[i + 1]);
+    serial_mode = 1;
+    printf("Serial keys on stdin: arrows/WASD move, F fire, space use, Q/E strafe,\n"
+           "1-7 weapons, Tab map, Enter, Esc menu, Y/N, Ctrl-C quit.\n");
+    return 0;
 }
 
 static int kbd_init(void)
@@ -281,6 +325,12 @@ static int kbd_init(void)
     int i;
     int flags;
     int found = 0;
+
+    /* started from a serial terminal (stdin is a tty, but not a VT):
+       take the keys from it, unless -vtkeys asks for the VT keyboard */
+    if (M_CheckParm("-serialkeys") ||
+        (!M_CheckParm("-vtkeys") && isatty(0) && !tty_is_kbd(0)))
+        return serial_init();
 
     /* First we need to find a file descriptor that represents the
        system's keyboard. This should be /dev/tty, /dev/console,
@@ -316,7 +366,7 @@ static int kbd_init(void)
         printf("Unable to find a file descriptor associated with "\
                 "the keyboard.\n" \
                 "Perhaps you're not using a virtual terminal?\n");
-        return 1;
+        return serial_init();
     }
 
     /* Find the keyboard's mode so we can restore it later. */
@@ -426,11 +476,99 @@ static void UpdateShiftStatus(int pressed, unsigned char key)
 }
 
 
+static void serial_post(int type, int key)
+{
+    event_t event;
+
+    event.type = type;
+    event.data1 = key;
+    event.data2 = type == ev_keydown && key < 128 ? key : 0;
+    event.data3 = 0;
+    D_PostEvent(&event);
+}
+
+static void serial_press(int key, int now)
+{
+    if (!held_until[key]) {
+        serial_post(ev_keydown, key);
+        held_until[key] = now + keyhold_first;
+    } else {
+        int t = now + KEYHOLD_REPEAT;   /* autorepeat: keep it held */
+
+        if (t > held_until[key])
+            held_until[key] = t;
+    }
+}
+
+static int serial_key(unsigned char c)
+{
+    switch (c) {
+    case 'w': return KEY_UPARROW;
+    case 's': return KEY_DOWNARROW;
+    case 'a': return KEY_LEFTARROW;
+    case 'd': return KEY_RIGHTARROW;
+    case 'q': return KEY_STRAFE_L;
+    case 'e': return KEY_STRAFE_R;
+    case 'f': return KEY_FIRE;
+    case ' ': return KEY_USE;
+    case '\r': case '\n': return KEY_ENTER;
+    case '\t': return KEY_TAB;
+    case 127: case 8: return KEY_BACKSPACE;
+    }
+    if (c >= 'A' && c <= 'Z')
+        return c - 'A' + 'a';
+    if (c >= ' ' && c < 127)
+        return c;               /* digits (weapons), y/n, cheats, menu letters */
+    return 0;
+}
+
+static void serial_get_event(void)
+{
+    unsigned char buf[64];
+    int n, i, key, now = I_GetTimeMS();
+
+    while ((n = read(0, buf, sizeof(buf))) > 0) {
+        for (i = 0; i < n; i++) {
+            if (buf[i] == 3) {          /* Ctrl-C */
+                kbd_shutdown();
+                I_Quit();
+            }
+            if (buf[i] == 27) {
+                /* ESC [ A..D are arrows, a lone ESC is the Escape key */
+                if (i + 2 < n && buf[i + 1] == '[' &&
+                    buf[i + 2] >= 'A' && buf[i + 2] <= 'D') {
+                    static const int arrows[] = { KEY_UPARROW, KEY_DOWNARROW,
+                                                  KEY_RIGHTARROW, KEY_LEFTARROW };
+                    serial_press(arrows[buf[i + 2] - 'A'], now);
+                    i += 2;
+                } else {
+                    serial_press(KEY_ESCAPE, now);
+                }
+                continue;
+            }
+            key = serial_key(buf[i]);
+            if (key)
+                serial_press(key, now);
+        }
+    }
+
+    for (key = 0; key < 256; key++)
+        if (held_until[key] && now >= held_until[key]) {
+            held_until[key] = 0;
+            serial_post(ev_keyup, key);
+        }
+}
+
 void I_GetEvent(void)
 {
     event_t event;
     int pressed;
     unsigned char key;
+
+    if (serial_mode) {
+        serial_get_event();
+        return;
+    }
 
     // put event-grabbing stuff in here
     
@@ -493,7 +631,8 @@ void I_GetEvent(void)
 
 void I_InitInput(void)
 {
-    kbd_init();
+    if (kbd_init())
+        printf("No keyboard input.\n");
 
     //UpdateFocus();
 }
