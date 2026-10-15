@@ -39,7 +39,13 @@ Related:
 4. `-fps` prints the frame rate every 5 seconds.
 5. The console is put in `KD_GRAPHICS` while playing, and `Quit Game` really
    exits. Terminal, keyboard and framebuffer are restored by `atexit()`.
-6. The `Makefile` defaults to the Buildroot mipsel toolchain
+6. **Sound effects on the WIWA HD95** (`fbdoom/i_mstarsound.c`, optional,
+   `MSTAR_SOUND=1`). A software mixer (8 channels, DMX sound lumps from the
+   WAD resampled to 48 kHz stereo, volume and stereo separation) runs in its
+   own thread and feeds the audio DSP of the MStar SoC. Sound comes out on
+   HDMI and on the analog (SCART) output at the same time. See
+   [Sound on the WIWA HD95](#sound-on-the-wiwa-hd95). Music is not supported yet.
+7. The `Makefile` defaults to the Buildroot mipsel toolchain
    (`CROSS_COMPILE ?= mipsel-buildroot-linux-gnu-`) and builds with
    `-std=gnu89`.
 
@@ -119,6 +125,29 @@ openvt -c 2 -s -w -- sh -c 'cd /home; ./fbdoom -iwad doom1.wad'
 Quit the game with Backspace, then `chvt 1`. If it hangs:
 `killall fbdoom; chvt 1`. The game's output goes to `tty2`, so redirect it
 (`> /tmp/doom.log 2>&1`) if you want to read it.
+
+## Sound on the WIWA HD95
+
+The box has no ALSA driver. Its audio goes through two DSPs inside the SoC
+(DEC decodes, SE post-processes and drives HDMI and the DAC), and they need
+the DSP code of the box's original firmware. `i_mstarsound.c` uses
+`mstar_audio.h` from the reverse engineering workspace: it loads that code,
+starts the DSPs with the xPCM (PCM) decoder and hands it 4 KB chunks of
+16-bit PCM whenever the DSP asks for them, paced to real time (about 64 ms
+of latency). It needs root, because it uses `/dev/mem`.
+
+`mstar_audio.h` and the DSP code headers (`dsp_fw.h`, `dec03_fw.h`,
+`se31_fw.h`, `xpcm_fw.h`, `audio_init_table.h`) are **not in this repo**:
+the DSP code is MStar's, taken from the stock firmware. Build with
+them in `MSTAR_AUDIO_DIR`:
+
+```sh
+cd fbdoom
+make NOSDL=1 MSTAR_SOUND=1 MSTAR_AUDIO_DIR=/path/to/tools/board
+```
+
+Without `MSTAR_SOUND=1` the game builds as before, without sound. Run it as
+usual; `-nosound` or `-nosfx` turns the sound off.
 
 ## Performance on the WIWA HD95
 

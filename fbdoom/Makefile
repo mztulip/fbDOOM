@@ -29,6 +29,16 @@ ifneq ($(NOSDL),1)
 	LIBS+= -lSDL
 endif
 
+# MSTAR_SOUND=1: sound effects through the DSP of the MStar Kronus (WIWA HD95).
+# Needs mstar_audio.h and the DSP firmware headers generated from the stock
+# firmware (not part of this repo), found in MSTAR_AUDIO_DIR.
+ifeq ($(MSTAR_SOUND),1)
+	MSTAR_AUDIO_DIR ?= ../../tools/board
+	CFLAGS+=-DFEATURE_MSTAR_SOUND
+	OBJS+=$(OBJDIR)/i_mstarsound.o
+	LIBS+=-lpthread
+endif
+
 # subdirectory for objects
 OBJDIR=build
 OUTPUT=fbdoom
@@ -63,3 +73,6 @@ $(OBJDIR)/%.o:	%.c
 print:
 	@echo OBJS: $(OBJS)
 
+$(OBJDIR)/i_mstarsound.o: i_mstarsound.c
+	@echo [Compiling $<]
+	$(VB)$(CC) $(CFLAGS) -std=gnu99 -I$(MSTAR_AUDIO_DIR) -c $< -o $@
