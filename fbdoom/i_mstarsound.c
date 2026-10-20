@@ -4,6 +4,8 @@
 // MIX_RATE stereo) running in its own thread and feeding the DEC DSP of the
 // SoC through mstar_audio.h (stock DSP firmware, xPCM decoder, /dev/mem),
 // or with OWN_SOUND=1 through own_audio.h (our own SE DSP program, no MStar code).
+// The music (i_oplmusic.c on the fmopl emulator, opl_fmopl.c) is added to
+// the same mix, so MIX_RATE must be 2 * OPL_FM_RATE.
 // Build with MSTAR_SOUND=1 or OWN_SOUND=1, see the Makefile and README.md.
 //
 
@@ -26,10 +28,15 @@
 #include "w_wad.h"
 #include "z_zone.h"
 #include "doomtype.h"
+#include "opl.h"
 
 #define NUM_CHANNELS	8
 #define MIX_RATE	48000
 #define MIX_FRAMES	512		// frames per mixing block (~10.7 ms)
+
+#if MIX_RATE != 2 * OPL_FM_RATE
+#error "OPL_MixMusic doubles OPL_FM_RATE to MIX_RATE"
+#endif
 
 typedef struct
 {
@@ -85,6 +92,7 @@ static void *MixThread(void *arg)
             }
         }
         pthread_mutex_unlock(&mix_lock);
+        OPL_MixMusic(acc, MIX_FRAMES);	// music (i_oplmusic.c), if playing
 
         for (i = 0; i < MIX_FRAMES * 2; ++i)
         {

@@ -35,7 +35,7 @@ endif
 ifeq ($(MSTAR_SOUND),1)
 	MSTAR_AUDIO_DIR ?= ../../tools/board
 	CFLAGS+=-DFEATURE_MSTAR_SOUND
-	OBJS+=$(OBJDIR)/i_mstarsound.o
+	OBJS+=$(OBJDIR)/i_mstarsound.o $(MUSIC_OBJS)
 	LIBS+=-lpthread
 endif
 
@@ -44,9 +44,13 @@ endif
 ifeq ($(OWN_SOUND),1)
 	MSTAR_AUDIO_DIR ?= ../../tools/board
 	CFLAGS+=-DFEATURE_MSTAR_SOUND -DOWN_AUDIO
-	OBJS+=$(OBJDIR)/i_mstarsound.o
+	OBJS+=$(OBJDIR)/i_mstarsound.o $(MUSIC_OBJS)
 	LIBS+=-lpthread
 endif
+
+# music for MSTAR_SOUND / OWN_SOUND: i_oplmusic.c (Chocolate Doom) on the fmopl
+# OPL2 emulator (fmopl.c, from QEMU, LGPL), mixed into the sound effects
+MUSIC_OBJS = $(addprefix $(OBJDIR)/, i_oplmusic.o opl_fmopl.o fmopl.o midifile.o mus2mid.o)
 
 # subdirectory for objects
 OBJDIR=build

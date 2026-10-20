@@ -106,6 +106,9 @@ static sound_module_t *sound_modules[] =
 
 static music_module_t *music_modules[] =
 {
+#ifdef FEATURE_MSTAR_SOUND
+    &music_opl_module,		// OPL emulator mixed by i_mstarsound.c
+#endif
 #ifdef FEATURE_SOUND
     &music_sdl_module,
     &music_opl_module,
