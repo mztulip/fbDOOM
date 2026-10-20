@@ -45,6 +45,8 @@ Related:
    own thread and feeds the audio DSP of the MStar SoC. Sound comes out on
    HDMI and on the analog (SCART) output at the same time. See
    [Sound on the WIWA HD95](#sound-on-the-wiwa-hd95). Music is not supported yet.
+   With `OWN_SOUND=1` the same mixer feeds **our own DSP program** instead
+   of MStar's DSP code (HDMI only so far), so that build can be published.
 7. The `Makefile` defaults to the Buildroot mipsel toolchain
    (`CROSS_COMPILE ?= mipsel-buildroot-linux-gnu-`) and builds with
    `-std=gnu89`.
@@ -146,8 +148,29 @@ cd fbdoom
 make NOSDL=1 MSTAR_SOUND=1 MSTAR_AUDIO_DIR=/path/to/tools/board
 ```
 
-Without `MSTAR_SOUND=1` the game builds as before, without sound. Run it as
-usual; `-nosound` or `-nosfx` turns the sound off.
+### Without MStar code: `OWN_SOUND=1`
+
+`OWN_SOUND=1` builds the same sound effects on top of `own_audio.h` from
+[msd7818_rootfs_kernel](https://github.com/mztulip/msd7818_rootfs_kernel)
+(`tools/board/`). It has the same `maudio_open/write/close` API, but loads
+our own small program into the SE DSP (`tools/dsp/pcm.s` there) and sets
+the audio block up with four register writes, so it contains no MStar code
+or firmware tables. The program writes one 24-bit sample pair per HDMI
+output frame (48 kHz); the mixer fills a ring in the DSP's data memory
+through IDMA. Sound comes out on **HDMI**; the analog (SCART) output is not
+done yet. How it was found: `docs/own_dsp_audio.md` in that repo.
+
+```sh
+cd fbdoom
+make clean
+make NOSDL=1 OWN_SOUND=1 MSTAR_AUDIO_DIR=/path/to/msd7818_rootfs_kernel/tools/board
+```
+
+`make clean` matters when switching between the builds: the Makefile does
+not rebuild on flag changes.
+
+Without `MSTAR_SOUND=1` or `OWN_SOUND=1` the game builds as before, without
+sound. Run it as usual; `-nosound` or `-nosfx` turns the sound off.
 
 ## Performance on the WIWA HD95
 

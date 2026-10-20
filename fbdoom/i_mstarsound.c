@@ -2,17 +2,22 @@
 // Sound effects for the MStar Kronus (MSD7818, WIWA HD95 set-top box):
 // a software mixer (NUM_CHANNELS voices, 8-bit DMX lumps resampled to
 // MIX_RATE stereo) running in its own thread and feeding the DEC DSP of the
-// SoC through mstar_audio.h (stock DSP firmware, xPCM decoder, /dev/mem).
-// Build with MSTAR_SOUND=1, see the Makefile and README.md.
+// SoC through mstar_audio.h (stock DSP firmware, xPCM decoder, /dev/mem),
+// or with OWN_SOUND=1 through own_audio.h (our own SE DSP program, no MStar code).
+// Build with MSTAR_SOUND=1 or OWN_SOUND=1, see the Makefile and README.md.
 //
 
 #include <pthread.h>
 #include <stdint.h>
 #include <string.h>
 
+#ifdef OWN_AUDIO
+#include "own_audio.h"			// our own SE DSP program, no MStar code
+#else
 #define MAUDIO_QUIET
 #define MAUDIO_LEAD	12288		// ~64 ms of latency at 48 kHz stereo
 #include "mstar_audio.h"
+#endif
 
 #include "deh_str.h"
 #include "i_sound.h"
@@ -223,7 +228,11 @@ static boolean I_MStar_InitSound(boolean _use_sfx_prefix)
     use_sfx_prefix = _use_sfx_prefix;
     memset(channels, 0, sizeof(channels));
 
+#ifdef OWN_AUDIO
+    printf("I_MStar_InitSound: own SE DSP program (%d Hz)\n", MIX_RATE);
+#else
     printf("I_MStar_InitSound: starting the DSPs (MStar xPCM, %d Hz)\n", MIX_RATE);
+#endif
     if (!maudio_open(MIX_RATE, 2))
     {
         fprintf(stderr, "I_MStar_InitSound: audio init failed (root? /dev/mem?)\n");

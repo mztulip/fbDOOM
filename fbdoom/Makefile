@@ -39,6 +39,15 @@ ifeq ($(MSTAR_SOUND),1)
 	LIBS+=-lpthread
 endif
 
+# OWN_SOUND=1: the same sound effects through our own SE DSP program (own_audio.h,
+# dsp_re/own/pcm.s): no MStar DSP code and no firmware tables, so the binary may be published.
+ifeq ($(OWN_SOUND),1)
+	MSTAR_AUDIO_DIR ?= ../../tools/board
+	CFLAGS+=-DFEATURE_MSTAR_SOUND -DOWN_AUDIO
+	OBJS+=$(OBJDIR)/i_mstarsound.o
+	LIBS+=-lpthread
+endif
+
 # subdirectory for objects
 OBJDIR=build
 OUTPUT=fbdoom
