@@ -1448,6 +1448,20 @@ void G_DoCompleted (void)
 	} 
 	else 
 	    wminfo.next = gamemap;          // go to next level 
+
+	// A cut-down IWAD (e.g. Freedoom with only E1M1 for a small flash)
+	// may end before E?M8: finish the episode instead of failing to load
+	// the missing map.
+	{
+	    char next[9];
+
+	    M_snprintf(next, sizeof(next), "E%dM%d", gameepisode, wminfo.next + 1);
+	    if (W_CheckNumForName(next) < 0)
+	    {
+		gameaction = ga_victory;
+		return;
+	    }
+	}
     }
 		 
     wminfo.maxkills = totalkills; 
