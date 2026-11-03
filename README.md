@@ -44,9 +44,13 @@ Related:
    WAD resampled to 48 kHz stereo, volume and stereo separation) runs in its
    own thread and feeds the audio DSP of the MStar SoC. Sound comes out on
    HDMI and on the analog (SCART) output at the same time. See
-   [Sound on the WIWA HD95](#sound-on-the-wiwa-hd95). Music is not supported yet.
+   [Sound on the WIWA HD95](#sound-on-the-wiwa-hd95).
    With `OWN_SOUND=1` the same mixer feeds **our own DSP program** instead
    of MStar's DSP code (HDMI only so far), so that build can be published.
+   **Music** (both sound builds): Chocolate Doom's OPL music player
+   (`i_oplmusic.c`, MUS/MIDI with the WAD's GENMIDI instruments) on our small
+   OPL2 emulator `opl2.c`, mixed into the sound effects. See
+   [Music](#music).
 7. The `Makefile` defaults to the Buildroot mipsel toolchain
    (`CROSS_COMPILE ?= mipsel-buildroot-linux-gnu-`) and builds with
    `-std=gnu89`.
@@ -171,6 +175,31 @@ not rebuild on flag changes.
 
 Without `MSTAR_SOUND=1` or `OWN_SOUND=1` the game builds as before, without
 sound. Run it as usual; `-nosound` or `-nosfx` turns the sound off.
+
+### Music
+
+The sound builds also play the music: `i_oplmusic.c` (Chocolate Doom 3.0.1)
+drives an emulated YM3812 (OPL2), which the mixer thread renders at 24 kHz
+for every block and doubles to 48 kHz. `-nomusic` turns it off.
+
+The emulator is `opl2.c`, written for this box. It works like the chip: a
+256-entry log-sine table and a 256-entry exponent table (1 KB together) and
+about 1 KB of state, so it stays in the CPU cache. The first version used
+fmopl (QEMU's YM3812 emulator, `fmopl.c`, still built in, `-fmopl` selects
+it): its 136 KB of randomly read tables did not fit in the 16 KB data cache
+that both VPEs of the 34Kc share, Doom's lines were evicted all the time and
+the extra scattered DRAM traffic starved the display (garbage on HDMI).
+On the board the music costs about 8 % of the CPU with `opl2.c` and 15 %
+with fmopl; with `opl2.c` only light noise is left on the picture.
+
+For the box's flash system (static, musl; the toolchain of the Buildroot
+build of that rootfs):
+```sh
+cd fbdoom
+make NOSDL=1 OWN_SOUND=1 MSTAR_AUDIO_DIR=/path/to/msd7818_rootfs_kernel/tools/board \
+     CROSS_COMPILE=/path/to/rootfs_mini/output/host/bin/mipsel-buildroot-linux-musl- \
+     OBJDIR=build_musl OUTPUT=fbdoom_musl LDFLAGS="-Wl,--gc-sections -static"
+```
 
 ## Performance on the WIWA HD95
 
