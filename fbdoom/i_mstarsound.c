@@ -32,7 +32,9 @@
 
 #define NUM_CHANNELS	8
 #define MIX_RATE	48000
+#ifndef MIX_FRAMES
 #define MIX_FRAMES	512		// frames per mixing block (~10.7 ms)
+#endif
 
 #if MIX_RATE != 2 * OPL_FM_RATE
 #error "OPL_MixMusic doubles OPL_FM_RATE to MIX_RATE"

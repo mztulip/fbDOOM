@@ -48,9 +48,9 @@ ifeq ($(OWN_SOUND),1)
 	LIBS+=-lpthread
 endif
 
-# music for MSTAR_SOUND / OWN_SOUND: i_oplmusic.c (Chocolate Doom) on the fmopl
-# OPL2 emulator (fmopl.c, from QEMU, LGPL), mixed into the sound effects
-MUSIC_OBJS = $(addprefix $(OBJDIR)/, i_oplmusic.o opl_fmopl.o fmopl.o midifile.o mus2mid.o)
+# music for MSTAR_SOUND / OWN_SOUND: i_oplmusic.c (Chocolate Doom) on our small
+# OPL2 emulator (opl2.c; -fmopl: fmopl.c, from QEMU, LGPL), mixed into the sound effects
+MUSIC_OBJS = $(addprefix $(OBJDIR)/, i_oplmusic.o opl_fmopl.o opl2.o fmopl.o midifile.o mus2mid.o)
 
 # subdirectory for objects
 OBJDIR=build

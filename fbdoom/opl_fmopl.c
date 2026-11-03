@@ -1,6 +1,8 @@
 //
 // OPL music without SDL (MStar Kronus, WIWA HD95): the opl.h interface on
-// the fmopl YM3812 (OPL2) emulator. There is no audio callback of its own:
+// the small OPL2 emulator of opl2.c, or with -fmopl on the fmopl YM3812
+// emulator (the first one used, kept for comparison: its large tables
+// disturb the display). There is no audio callback of its own:
 // the sound effects mixer thread (i_mstarsound.c) calls OPL_MixMusic() for
 // every block. It runs the music timer callbacks of i_oplmusic.c at the
 // right sample, renders the chip at OPL_FM_RATE and doubles the rate to the
@@ -19,7 +21,9 @@
 #include <string.h>
 
 #include "fmopl.h"
+#include "m_argv.h"
 #include "opl.h"
+#include "opl2.h"
 
 #define OPL_CLOCK	3579545
 #define MAX_CALLBACKS	64
@@ -38,11 +42,14 @@ static int num_timers;
 // Recursive: the callbacks run with it held and call OPL_WriteRegister and
 // OPL_SetCallback, which lock it too.
 static pthread_mutex_t opl_mutex;
-static FM_OPL *chip;
+static FM_OPL *fm;		// with -fmopl
+static opl2_t *chip;		// otherwise
+static int running;		// one of them is set up
 static uint64_t samples;	// rendered since OPL_Init
 static uint64_t now_us;
 static int paused;
-static int16_t last;		// previous sample, for the 2x interpolation
+static int32_t last;		// previous sample, for the 2x interpolation
+static int32_t dc_in, dc_out;	// DC blocker: previous input, output << 4
 
 static void SetTime(void)
 {
@@ -65,13 +72,20 @@ static int NextTimer(void)
 
 void OPL_WriteRegister(int reg, int value)
 {
-    if (chip == NULL)
+    if (!running)
     {
         return;
     }
     pthread_mutex_lock(&opl_mutex);
-    OPLWrite(chip, 0, reg);
-    OPLWrite(chip, 1, value);
+    if (fm != NULL)
+    {
+        OPLWrite(fm, 0, reg);
+        OPLWrite(fm, 1, value);
+    }
+    else if (chip != NULL)
+    {
+        OPL2_Write(chip, reg, value);
+    }
     pthread_mutex_unlock(&opl_mutex);
 }
 
@@ -107,34 +121,46 @@ opl_init_result_t OPL_Init(unsigned int port_base)
     pthread_mutex_init(&opl_mutex, &attr);
     pthread_mutexattr_destroy(&attr);
 
-    chip = OPLCreate(OPL_CLOCK, OPL_FM_RATE);
-    if (chip == NULL)
+    if (M_CheckParm("-fmopl") > 0)
+    {
+        fm = OPLCreate(OPL_CLOCK, OPL_FM_RATE);
+    }
+    else
+    {
+        chip = OPL2_Create(OPL_FM_RATE);
+    }
+    if (fm == NULL && chip == NULL)
     {
         return OPL_INIT_NONE;
     }
+    running = 1;
     num_timers = 0;
     samples = 0;
     now_us = 0;
     paused = 0;
     last = 0;
+    dc_in = dc_out = 0;
     InitRegisters();
     return OPL_INIT_OPL2;
 }
 
 void OPL_Shutdown(void)
 {
-    FM_OPL *c;
-
-    if (chip == NULL)
+    if (!running)
     {
         return;
     }
     pthread_mutex_lock(&opl_mutex);
-    c = chip;
-    chip = NULL;			// OPL_MixMusic stops here
+    running = 0;			// OPL_MixMusic stops here
     num_timers = 0;
     pthread_mutex_unlock(&opl_mutex);
-    OPLDestroy(c);
+    if (fm != NULL)
+    {
+        OPLDestroy(fm);
+        fm = NULL;
+    }
+    OPL2_Destroy(chip);
+    chip = NULL;
 }
 
 void OPL_SetSampleRate(unsigned int rate)
@@ -195,14 +221,14 @@ void OPL_SetPaused(int p)
 void OPL_MixMusic(int32_t *acc, int frames)
 {
     static int16_t buf[MAX_BLOCK];
-    int need = frames / 2, done = 0, i;
+    int need = frames / 2, done = 0, gain, i;
 
-    if (chip == NULL || need > MAX_BLOCK)
+    if (!running || need > MAX_BLOCK)
     {
         return;
     }
     pthread_mutex_lock(&opl_mutex);
-    if (chip == NULL || paused)
+    if (!running || paused)
     {
         pthread_mutex_unlock(&opl_mutex);
         return;
@@ -229,16 +255,31 @@ void OPL_MixMusic(int32_t *acc, int frames)
                 n = until > 0 ? (int) until : 1;
             }
         }
-        YM3812UpdateOne(chip, buf + done, n);
+        if (fm != NULL)
+        {
+            YM3812UpdateOne(fm, buf + done, n);
+        }
+        else
+        {
+            OPL2_Render(chip, buf + done, n);
+        }
         done += n;
         samples += n;
         SetTime();
     }
+    gain = fm != NULL ? 1 : 2;		// opl2.c is 6 dB quieter than fmopl
     pthread_mutex_unlock(&opl_mutex);
 
     for (i = 0; i < need; ++i)
     {
-        int32_t s = buf[i], mid = (last + s) / 2;
+        int32_t x = buf[i] * gain, s, mid;
+
+        // DC blocker (about 7.5 Hz): the half-wave and rectified waveforms
+        // add an offset that only eats into the headroom
+        dc_out += ((x - dc_in) << 4) - (dc_out >> 9);
+        dc_in = x;
+        s = dc_out >> 4;
+        mid = (last + s) / 2;
 
         acc[4 * i] += mid;
         acc[4 * i + 1] += mid;
