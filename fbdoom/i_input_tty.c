@@ -543,8 +543,7 @@ static void serial_get_event(void)
     while ((n = read(0, buf, sizeof(buf))) > 0) {
         for (i = 0; i < n; i++) {
             if (buf[i] == 3) {          /* Ctrl-C */
-                kbd_shutdown();
-                I_Quit();
+                I_Quit();               /* runs the exit functions (sound off), kbd_restore at exit */
             }
             if (buf[i] == 27) {
                 /* ESC [ A..D are arrows, a lone ESC is the Escape key */
@@ -588,7 +587,6 @@ void I_GetEvent(void)
     while (kbd_read(&pressed, &key))
     {
         if (key == 0x0E) {
-            kbd_shutdown();
             I_Quit();
         }
 
